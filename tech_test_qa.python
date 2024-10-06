@@ -1,0 +1,78 @@
+# SQL code to verify unexpected content.
+# select * from trades where symbol like '%,%';
+# --'USD,CHF' doesn't sound like proper symbol.
+# select * from trades where contractsize is null;
+# -- contractsize should not be null.
+# select * from trades where symbol = 'COFFEE';
+# -- 'COFFEE' doesn't look like valid symbol.
+# select count(distinct login_hash) from trades 
+# where login_hash not in (
+# select login_hash from users group by login_hash);
+# -- there are 5026 users from trades table not in users table.
+
+import psycopg2
+import pandas as pd
+import os
+
+# Define connection parameters
+conn_params = {
+    "host": "technical-test-1.cncti7m4kr9f.ap-south-1.rds.amazonaws.com",
+    "dbname": "technical_test",
+    "user": "candidate",
+    "password": os.getenv("PGPASSWORD")
+}
+
+
+# Connect to PostgreSQL and load data into pandas DataFrame
+def load_data(query):
+    conn = psycopg2.connect(**conn_params)
+    try:
+        df = pd.read_sql(query, conn)
+        return df
+    finally:
+        conn.close()
+
+
+# Define patterns and ranges for validation
+def find_unexpected_values(df):
+    unexpected_strings = {}
+    unexpected_numbers = {}
+    unexpected_dates = {}
+
+    # Loop through columns to check for unexpected values
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            # Check for unexpected strings (non-alphanumeric, special characters, etc.)
+            unexpected_strings[col] = df[~df[col].str.contains(r'^[a-zA-Z0-9\s]+$', na=False)]
+        elif pd.api.types.is_numeric_dtype(df[col]):
+            # Define rules for unexpected numbers (e.g., negative values or out of expected range)
+            unexpected_numbers[col] = df[(df[col] < 0) | (df[col].isnull())]
+        elif pd.api.types.is_datetime64_any_dtype(df[col]):
+            # Define a date range and find dates outside that range (unexpected dates)
+            date_lower_bound = pd.Timestamp('2000-01-01')
+            date_upper_bound = pd.Timestamp('2030-01-01')
+            unexpected_dates[col] = df[(df[col] < date_lower_bound) | (df[col] > date_upper_bound) | (df[col].isnull())]
+
+    return unexpected_strings, unexpected_numbers, unexpected_dates
+
+
+# Example usage
+if __name__ == '__main__':
+    # Define your SQL query
+    query = "SELECT * FROM trades"
+
+    # Load data from PostgreSQL
+    df = load_data(query)
+
+    # Find unexpected values
+    unexpected_strings, unexpected_numbers, unexpected_dates = find_unexpected_values(df)
+
+    # Output the results
+    print("Unexpected Strings:")
+    print(unexpected_strings)
+
+    print("Unexpected Numbers:")
+    print(unexpected_numbers)
+
+    print("Unexpected Dates:")
+    print(unexpected_dates)
